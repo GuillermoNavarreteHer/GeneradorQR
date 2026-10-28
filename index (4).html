@@ -1,0 +1,1159 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  Generador de Códigos QR Avanzado
+  ----------------------------------------------------------------------------
+  Stack:
+    • Tailwind CSS (Play CDN 3.4.17)  → estilos utilitarios + modo oscuro por clase
+    • qr-code-styling 1.9.2 (UMD)      → generación del QR en SVG / PNG
+    • JavaScript vainilla              → estado, eventos, historial, descargas
+
+  Estructura del archivo:
+    1. <head>    → metadatos, fuentes, Tailwind, tokens de color y componentes CSS
+    2. <body>    → cabecera, panel de control (izquierda), vista previa (derecha)
+    3. <script>  → módulos JS: tema, formularios, generación, descargas, historial
+  ============================================================================
+-->
+<html lang="es" class="dark" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Generador QR</title>
+  <meta name="description" content="Crea códigos QR para enlaces, texto, WiFi, contactos y correos. Personaliza colores y descarga en PNG o SVG." />
+
+  <!-- 1.1 Tema inicial: se aplica antes de pintar para evitar parpadeos.
+       Por defecto: oscuro. Si el usuario eligió otro tema, se respeta. -->
+  <script>
+    (function () {
+      var theme = 'dark';
+      try { theme = localStorage.getItem('qr-theme') || 'dark'; } catch (e) { /* almacenamiento no disponible */ }
+      var root = document.documentElement;
+      root.classList.toggle('dark', theme === 'dark');
+      root.setAttribute('data-theme', theme);
+    })();
+  </script>
+
+  <!-- 1.2 Tipografía -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- 1.3 Tailwind CSS (Play CDN) + configuración -->
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- 1.4 Librería de generación QR (UMD → expone window.QRCodeStyling) -->
+  <script src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.9.2/lib/qr-code-styling.js"></script>
+
+  <!-- 1.5 Tokens de color base (fondo del documento) y ajustes globales -->
+  <style>
+    :root {
+      --page-bg: #f4f5fa;
+      --page-fg: #0f172a;
+      --glow-a: rgba(139, 92, 246, 0.10);
+      --glow-b: rgba(16, 185, 129, 0.07);
+      --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 32px -16px rgba(15, 23, 42, 0.18);
+      color-scheme: light;
+      box-sizing: border-box;
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --page-bg: #0b1020;
+        --page-fg: #e2e8f0;
+        --glow-a: rgba(139, 92, 246, 0.16);
+        --glow-b: rgba(16, 185, 129, 0.08);
+        --card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 24px 48px -28px rgba(0, 0, 0, 0.7);
+        color-scheme: dark;
+      }
+    }
+    :root[data-theme="dark"] {
+      --page-bg: #0b1020;
+      --page-fg: #e2e8f0;
+      --glow-a: rgba(139, 92, 246, 0.16);
+      --glow-b: rgba(16, 185, 129, 0.08);
+      --card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 24px 48px -28px rgba(0, 0, 0, 0.7);
+      color-scheme: dark;
+    }
+    html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+    body {
+      background-color: var(--page-bg);
+      background-image:
+        radial-gradient(900px 500px at 10% -10%, var(--glow-a), transparent 60%),
+        radial-gradient(700px 400px at 100% 0%, var(--glow-b), transparent 60%);
+      background-attachment: fixed;
+      color: var(--page-fg);
+      transition: background-color .3s ease, color .3s ease;
+    }
+
+    /* El SVG del QR se escala al contenedor; el tamaño real (px) se usa al exportar */
+    #qr-canvas svg, #qr-canvas canvas, .qr-thumb svg { width: 100% !important; height: auto !important; display: block; }
+
+    /* Barrido de "escáner" que confirma que el QR se actualizó */
+    @keyframes scan { from { transform: translateY(-10%); opacity: 0; } 15% { opacity: 1; } to { transform: translateY(110%); opacity: 0; } }
+    .scan-line { animation: scan .9s ease-out; }
+    @media (prefers-reduced-motion: reduce) {
+      .scan-line { animation: none; }
+      *, *::before, *::after { transition-duration: 0s !important; }
+    }
+
+    /* Desplazamiento horizontal limpio para las pestañas en móvil */
+    .no-scrollbar { scrollbar-width: none; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+
+    /* Controles nativos de color con apariencia de muestra redonda */
+    input[type="color"] { -webkit-appearance: none; appearance: none; border: none; padding: 0; background: none; cursor: pointer; }
+    input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+    input[type="color"]::-webkit-color-swatch { border: none; border-radius: 10px; }
+    input[type="color"]::-moz-color-swatch { border: none; border-radius: 10px; }
+
+    /* Slider */
+    input[type="range"] { accent-color: #8b5cf6; }
+    .card { box-shadow: var(--card-shadow); }
+  </style>
+
+  <!-- 1.6 Componentes reutilizables con @apply -->
+  <style type="text/tailwindcss">
+    @layer components {
+      .card {
+        @apply rounded-2xl border border-slate-200/80 bg-white/75 backdrop-blur-xl transition-colors duration-300
+               dark:border-white/[0.07] dark:bg-slate-900/55;
+      }
+      .card-title { @apply text-base font-semibold tracking-tight text-slate-900 dark:text-white; }
+      .card-hint  { @apply mt-0.5 text-sm text-slate-500 dark:text-slate-400; }
+      .label { @apply mb-1.5 block text-[13px] font-medium text-slate-600 dark:text-slate-300; }
+      .field {
+        @apply w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[15px] text-slate-900 outline-none
+               transition-all duration-300 placeholder:text-slate-400
+               focus:border-violet-500 focus:ring-4 focus:ring-violet-500/15
+               dark:border-white/10 dark:bg-slate-950/60 dark:text-slate-100 dark:placeholder:text-slate-500
+               dark:focus:border-violet-400 dark:focus:ring-violet-400/15;
+      }
+      .tab {
+        @apply flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium text-slate-600 transition-all duration-300
+               hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500
+               dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white;
+      }
+      .tab[aria-selected="true"] {
+        @apply bg-violet-600 text-white shadow-lg shadow-violet-600/25 hover:bg-violet-600 hover:text-white
+               dark:bg-violet-500 dark:shadow-violet-500/20 dark:hover:bg-violet-500;
+      }
+      .seg {
+        @apply flex-1 rounded-lg px-2 py-2 text-sm font-medium text-slate-600 transition-all duration-300
+               hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500
+               dark:text-slate-400 dark:hover:text-white;
+      }
+      .seg[aria-pressed="true"] {
+        @apply bg-white text-slate-900 shadow-sm dark:bg-slate-700/80 dark:text-white;
+      }
+      .style-opt {
+        @apply flex flex-col items-center gap-1.5 rounded-xl border border-slate-200 bg-white p-2.5 text-xs font-medium text-slate-600
+               transition-all duration-300 hover:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500
+               dark:border-white/10 dark:bg-slate-950/40 dark:text-slate-400 dark:hover:border-violet-400/60;
+      }
+      .style-opt[aria-pressed="true"] {
+        @apply border-violet-500 bg-violet-50 text-violet-700 ring-4 ring-violet-500/10
+               dark:border-violet-400 dark:bg-violet-500/10 dark:text-violet-200;
+      }
+      .btn {
+        @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-300
+               focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-500/30 active:scale-[0.98]
+               disabled:pointer-events-none disabled:opacity-40;
+      }
+      .btn-primary { @apply btn bg-violet-600 text-white shadow-lg shadow-violet-600/25 hover:bg-violet-500 dark:bg-violet-500 dark:hover:bg-violet-400; }
+      .btn-ghost {
+        @apply btn border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50
+               dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200 dark:hover:bg-white/[0.08];
+      }
+      .icon-btn {
+        @apply inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 transition-all duration-300
+               hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-500/30
+               dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200 dark:hover:bg-white/[0.08];
+      }
+    }
+  </style>
+</head>
+
+<body class="min-h-screen font-sans antialiased">
+
+  <!-- =======================================================================
+       2.1 CABECERA: marca + interruptor de tema
+       ======================================================================= -->
+  <header class="mx-auto flex max-w-6xl items-center justify-between px-4 pb-2 pt-5 sm:px-6 lg:pt-8">
+    <div class="flex items-center gap-3">
+      <!-- Isotipo: un patrón localizador de QR -->
+      <svg class="h-10 w-10 shrink-0" viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="1" y="1" width="38" height="38" rx="11" class="fill-violet-600 dark:fill-violet-500" />
+        <rect x="9" y="9" width="22" height="22" rx="6" fill="none" stroke="white" stroke-width="3" />
+        <rect x="15" y="15" width="10" height="10" rx="2.5" fill="white" />
+      </svg>
+      <div>
+        <h1 class="text-lg font-bold leading-tight tracking-tight text-slate-900 dark:text-white">Generador QR</h1>
+        <p class="text-[13px] text-slate-500 dark:text-slate-400">Crea, personaliza y descarga en segundos</p>
+      </div>
+    </div>
+
+    <button id="theme-toggle" class="icon-btn" type="button" aria-label="Cambiar a modo claro" title="Cambiar tema">
+      <!-- Sol: visible en modo oscuro (pasa a claro) -->
+      <svg class="hidden h-5 w-5 dark:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+      </svg>
+      <!-- Luna: visible en modo claro (pasa a oscuro) -->
+      <svg class="h-5 w-5 dark:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+      </svg>
+    </button>
+  </header>
+
+  <!-- =======================================================================
+       2.2 LAYOUT PRINCIPAL
+       Móvil: una columna (vista previa primero, controles debajo).
+       Tablet/escritorio: dos columnas (controles izq. · vista previa sticky der.).
+       ======================================================================= -->
+  <main class="mx-auto grid max-w-6xl gap-5 px-4 pb-24 pt-4 sm:px-6 md:grid-cols-[minmax(0,1fr)_minmax(0,340px)] lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-6 lg:pb-12">
+
+    <!-- ===================== COLUMNA DERECHA: VISTA PREVIA ===================== -->
+    <aside class="order-first md:order-last">
+      <section id="preview-card" class="card p-5 md:sticky md:top-6 lg:p-6" aria-labelledby="preview-title">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="preview-title" class="card-title">Vista previa</h2>
+            <p id="preview-meta" class="card-hint">Se actualiza mientras escribes</p>
+          </div>
+          <span id="type-badge" class="rounded-lg bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">URL</span>
+        </div>
+
+        <!-- Marco con esquinas de escáner -->
+        <div class="relative mx-auto mt-5 w-full max-w-[260px] md:max-w-none">
+          <div class="pointer-events-none absolute -inset-3 text-violet-500/70 dark:text-violet-400/70" aria-hidden="true">
+            <span class="absolute left-0 top-0 h-6 w-6 rounded-tl-xl border-l-[3px] border-t-[3px] border-current"></span>
+            <span class="absolute right-0 top-0 h-6 w-6 rounded-tr-xl border-r-[3px] border-t-[3px] border-current"></span>
+            <span class="absolute bottom-0 left-0 h-6 w-6 rounded-bl-xl border-b-[3px] border-l-[3px] border-current"></span>
+            <span class="absolute bottom-0 right-0 h-6 w-6 rounded-br-xl border-b-[3px] border-r-[3px] border-current"></span>
+          </div>
+
+          <div id="qr-stage" class="relative aspect-square overflow-hidden rounded-xl bg-white ring-1 ring-slate-200 transition-colors duration-300 dark:ring-white/10">
+            <div id="qr-canvas" class="h-full w-full" role="img" aria-label="Código QR generado"></div>
+            <div id="scan" class="pointer-events-none absolute inset-x-0 top-0 hidden h-1/4 bg-gradient-to-b from-transparent via-violet-500/25 to-transparent" aria-hidden="true"></div>
+
+            <!-- Estado vacío / error -->
+            <div id="qr-empty" class="absolute inset-0 hidden flex-col items-center justify-center gap-2 bg-slate-50 p-6 text-center dark:bg-slate-950">
+              <svg class="h-10 w-10 text-slate-300 dark:text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><path d="M14 14h3v3h-3zM18 18h3v3h-3z" />
+              </svg>
+              <p id="qr-empty-text" class="max-w-[220px] text-sm text-slate-500 dark:text-slate-400">Completa los datos para generar tu código</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Aviso de contraste / legibilidad -->
+        <p id="contrast-warning" class="mt-6 hidden items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-[13px] leading-snug text-amber-800 dark:bg-amber-400/10 dark:text-amber-200" role="status">
+          <svg class="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /></svg>
+          <span id="contrast-text"></span>
+        </p>
+
+        <!-- Acciones -->
+        <div class="mt-6 grid grid-cols-2 gap-2.5">
+          <button id="dl-png" class="btn-primary" type="button">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 21h16" /></svg>
+            PNG
+          </button>
+          <button id="dl-svg" class="btn-primary" type="button">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 21h16" /></svg>
+            SVG
+          </button>
+          <button id="copy-img" class="btn-ghost" type="button">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>
+            Copiar imagen
+          </button>
+          <button id="save-history" class="btn-ghost" type="button">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
+            Guardar
+          </button>
+        </div>
+        <p id="export-size" class="mt-3 text-center text-xs text-slate-500 dark:text-slate-400">Exportación: 600 × 600 px</p>
+      </section>
+    </aside>
+
+    <!-- ===================== COLUMNA IZQUIERDA: CONTROLES ===================== -->
+    <div class="flex min-w-0 flex-col gap-5 lg:gap-6">
+
+      <!-- ---------- Tarjeta: contenido ---------- -->
+      <section class="card p-5 lg:p-6" aria-labelledby="content-title">
+        <h2 id="content-title" class="card-title">Contenido</h2>
+        <p class="card-hint">Elige qué debe abrir el código al escanearlo</p>
+
+        <!-- Pestañas de tipo de dato -->
+        <div class="no-scrollbar -mx-1 mt-4 flex gap-1.5 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Tipo de contenido">
+          <button class="tab" role="tab" type="button" data-type="url" aria-selected="true" aria-controls="panel-url">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
+            Enlace
+          </button>
+          <button class="tab" role="tab" type="button" data-type="text" aria-selected="false" aria-controls="panel-text">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
+            Texto
+          </button>
+          <button class="tab" role="tab" type="button" data-type="wifi" aria-selected="false" aria-controls="panel-wifi">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01" /></svg>
+            WiFi
+          </button>
+          <button class="tab" role="tab" type="button" data-type="vcard" aria-selected="false" aria-controls="panel-vcard">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+            Contacto
+          </button>
+          <button class="tab" role="tab" type="button" data-type="email" aria-selected="false" aria-controls="panel-email">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 6-10 7L2 6" /></svg>
+            Correo
+          </button>
+        </div>
+
+        <!-- Paneles de formulario: cada campo lleva data-field para leerlo genéricamente -->
+        <div class="mt-5">
+          <!-- URL -->
+          <div id="panel-url" class="panel" role="tabpanel" data-panel="url">
+            <label class="label" for="f-url">Dirección web</label>
+            <input id="f-url" class="field" type="url" inputmode="url" autocomplete="url" data-field="url"
+                   placeholder="https://tusitio.com" value="https://claude.ai" />
+            <p class="mt-2 text-[13px] text-slate-500 dark:text-slate-400">Si no incluyes https://, se añade automáticamente.</p>
+          </div>
+
+          <!-- Texto -->
+          <div id="panel-text" class="panel hidden" role="tabpanel" data-panel="text">
+            <div class="flex items-end justify-between">
+              <label class="label" for="f-text">Mensaje</label>
+              <span id="text-count" class="mb-1.5 text-xs tabular-nums text-slate-400">0 caracteres</span>
+            </div>
+            <textarea id="f-text" class="field min-h-[132px] resize-y" data-field="text" maxlength="2000"
+                      placeholder="Escribe cualquier texto: una nota, un código de descuento, instrucciones…"></textarea>
+          </div>
+
+          <!-- WiFi -->
+          <div id="panel-wifi" class="panel hidden space-y-4" role="tabpanel" data-panel="wifi">
+            <div>
+              <label class="label" for="f-ssid">Nombre de la red (SSID)</label>
+              <input id="f-ssid" class="field" type="text" autocomplete="off" data-field="ssid" placeholder="MiCasa_5G" />
+            </div>
+            <div>
+              <span class="label" id="sec-label">Seguridad</span>
+              <div class="flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-950/60" role="group" aria-labelledby="sec-label">
+                <button type="button" class="seg" data-security="WPA" aria-pressed="true">WPA/WPA2</button>
+                <button type="button" class="seg" data-security="WEP" aria-pressed="false">WEP</button>
+                <button type="button" class="seg" data-security="nopass" aria-pressed="false">Abierta</button>
+              </div>
+              <input type="hidden" data-field="security" id="f-security" value="WPA" />
+            </div>
+            <div id="wifi-pass-wrap">
+              <label class="label" for="f-pass">Contraseña</label>
+              <div class="relative">
+                <input id="f-pass" class="field pr-12" type="password" autocomplete="new-password" data-field="password" placeholder="Contraseña de la red" />
+                <button id="toggle-pass" type="button" class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 transition-colors hover:text-slate-700 dark:hover:text-slate-200" aria-label="Mostrar contraseña">
+                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                </button>
+              </div>
+            </div>
+            <label class="flex cursor-pointer items-center gap-3 text-sm text-slate-600 dark:text-slate-300">
+              <input type="checkbox" data-field="hidden" class="h-4 w-4 rounded border-slate-300 accent-violet-600" />
+              La red está oculta
+            </label>
+          </div>
+
+          <!-- vCard -->
+          <div id="panel-vcard" class="panel hidden grid gap-4 sm:grid-cols-2" role="tabpanel" data-panel="vcard">
+            <div>
+              <label class="label" for="f-first">Nombre</label>
+              <input id="f-first" class="field" type="text" autocomplete="given-name" data-field="first" placeholder="Ana" />
+            </div>
+            <div>
+              <label class="label" for="f-last">Apellidos</label>
+              <input id="f-last" class="field" type="text" autocomplete="family-name" data-field="last" placeholder="García López" />
+            </div>
+            <div>
+              <label class="label" for="f-phone">Teléfono</label>
+              <input id="f-phone" class="field" type="tel" inputmode="tel" autocomplete="tel" data-field="phone" placeholder="+34 600 000 000" />
+            </div>
+            <div>
+              <label class="label" for="f-vmail">Email</label>
+              <input id="f-vmail" class="field" type="email" inputmode="email" autocomplete="email" data-field="email" placeholder="ana@empresa.com" />
+            </div>
+            <div>
+              <label class="label" for="f-org">Empresa</label>
+              <input id="f-org" class="field" type="text" autocomplete="organization" data-field="org" placeholder="Estudio Norte" />
+            </div>
+            <div>
+              <label class="label" for="f-title">Cargo</label>
+              <input id="f-title" class="field" type="text" autocomplete="organization-title" data-field="title" placeholder="Directora de diseño" />
+            </div>
+            <div class="sm:col-span-2">
+              <label class="label" for="f-web">Sitio web</label>
+              <input id="f-web" class="field" type="url" inputmode="url" data-field="web" placeholder="https://estudionorte.com" />
+            </div>
+          </div>
+
+          <!-- Correo -->
+          <div id="panel-email" class="panel hidden space-y-4" role="tabpanel" data-panel="email">
+            <div>
+              <label class="label" for="f-to">Destinatario</label>
+              <input id="f-to" class="field" type="email" inputmode="email" data-field="to" placeholder="hola@empresa.com" />
+            </div>
+            <div>
+              <label class="label" for="f-subject">Asunto</label>
+              <input id="f-subject" class="field" type="text" data-field="subject" placeholder="Solicitud de información" />
+            </div>
+            <div>
+              <label class="label" for="f-body">Mensaje</label>
+              <textarea id="f-body" class="field min-h-[110px] resize-y" data-field="body" placeholder="Hola, me gustaría saber más sobre…"></textarea>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- Tarjeta: estilo ---------- -->
+      <section class="card p-5 lg:p-6" aria-labelledby="style-title">
+        <h2 id="style-title" class="card-title">Estilo</h2>
+        <p class="card-hint">Colores, forma de los módulos, tamaño y robustez</p>
+
+        <!-- Colores -->
+        <div class="mt-5 grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+          <div>
+            <label class="label" for="fg-text">Color de los puntos</label>
+            <div class="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-1.5 transition-colors duration-300 focus-within:border-violet-500 dark:border-white/10 dark:bg-slate-950/60">
+              <input id="fg-color" type="color" value="#0f172a" class="h-9 w-9 shrink-0" aria-label="Elegir color de los puntos" />
+              <input id="fg-text" type="text" value="#0F172A" maxlength="7" spellcheck="false"
+                     class="w-full min-w-0 bg-transparent text-sm font-medium uppercase tabular-nums text-slate-800 outline-none dark:text-slate-100" />
+            </div>
+          </div>
+          <button id="swap-colors" type="button" class="icon-btn mb-1 h-9 w-9" aria-label="Intercambiar colores" title="Intercambiar colores">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4" /></svg>
+          </button>
+          <div>
+            <label class="label" for="bg-text">Color de fondo</label>
+            <div class="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-1.5 transition-colors duration-300 focus-within:border-violet-500 dark:border-white/10 dark:bg-slate-950/60">
+              <input id="bg-color" type="color" value="#ffffff" class="h-9 w-9 shrink-0 ring-1 ring-inset ring-slate-200 rounded-[10px] dark:ring-white/10" aria-label="Elegir color de fondo" />
+              <input id="bg-text" type="text" value="#FFFFFF" maxlength="7" spellcheck="false"
+                     class="w-full min-w-0 bg-transparent text-sm font-medium uppercase tabular-nums text-slate-800 outline-none dark:text-slate-100" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Combinaciones rápidas (se generan desde JS) -->
+        <div class="mt-3 flex flex-wrap items-center gap-2" id="presets" aria-label="Combinaciones de color"></div>
+
+        <!-- Forma de los módulos -->
+        <div class="mt-6">
+          <span class="label" id="dot-label">Forma de los módulos</span>
+          <div class="grid grid-cols-4 gap-2" role="group" aria-labelledby="dot-label">
+            <button type="button" class="style-opt" data-dot="square" aria-pressed="true">
+              <svg class="h-7 w-7" viewBox="0 0 28 28" aria-hidden="true" fill="currentColor"><rect x="2" y="2" width="7" height="7"/><rect x="10.5" y="2" width="7" height="7"/><rect x="2" y="10.5" width="7" height="7"/><rect x="19" y="10.5" width="7" height="7"/><rect x="10.5" y="19" width="7" height="7"/><rect x="19" y="19" width="7" height="7"/></svg>
+              Cuadrado
+            </button>
+            <button type="button" class="style-opt" data-dot="rounded" aria-pressed="false">
+              <svg class="h-7 w-7" viewBox="0 0 28 28" aria-hidden="true" fill="currentColor"><rect x="2" y="2" width="7" height="7" rx="2.5"/><rect x="10.5" y="2" width="7" height="7" rx="2.5"/><rect x="2" y="10.5" width="7" height="7" rx="2.5"/><rect x="19" y="10.5" width="7" height="7" rx="2.5"/><rect x="10.5" y="19" width="7" height="7" rx="2.5"/><rect x="19" y="19" width="7" height="7" rx="2.5"/></svg>
+              Suave
+            </button>
+            <button type="button" class="style-opt" data-dot="dots" aria-pressed="false">
+              <svg class="h-7 w-7" viewBox="0 0 28 28" aria-hidden="true" fill="currentColor"><circle cx="5.5" cy="5.5" r="3.5"/><circle cx="14" cy="5.5" r="3.5"/><circle cx="5.5" cy="14" r="3.5"/><circle cx="22.5" cy="14" r="3.5"/><circle cx="14" cy="22.5" r="3.5"/><circle cx="22.5" cy="22.5" r="3.5"/></svg>
+              Puntos
+            </button>
+            <button type="button" class="style-opt" data-dot="classy" aria-pressed="false">
+              <svg class="h-7 w-7" viewBox="0 0 28 28" aria-hidden="true" fill="currentColor"><path d="M2 2h4.5A2.5 2.5 0 0 1 9 4.5V9H4.5A2.5 2.5 0 0 1 2 6.5z"/><path d="M10.5 2H15a2.5 2.5 0 0 1 2.5 2.5V9H13a2.5 2.5 0 0 1-2.5-2.5z"/><path d="M2 10.5h4.5A2.5 2.5 0 0 1 9 13v4.5H4.5A2.5 2.5 0 0 1 2 15z"/><path d="M19 10.5h4.5A2.5 2.5 0 0 1 26 13v4.5h-4.5A2.5 2.5 0 0 1 19 15z"/><path d="M10.5 19H15a2.5 2.5 0 0 1 2.5 2.5V26H13a2.5 2.5 0 0 1-2.5-2.5z"/><path d="M19 19h4.5a2.5 2.5 0 0 1 2.5 2.5V26h-4.5a2.5 2.5 0 0 1-2.5-2.5z"/></svg>
+              Elegante
+            </button>
+          </div>
+        </div>
+
+        <!-- Tamaño -->
+        <div class="mt-6">
+          <div class="flex items-center justify-between">
+            <label class="label" for="size">Tamaño de exportación</label>
+            <output id="size-out" for="size" class="mb-1.5 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-slate-700 dark:bg-white/5 dark:text-slate-200">600 px</output>
+          </div>
+          <input id="size" type="range" min="200" max="2000" step="50" value="600" class="w-full cursor-pointer" />
+          <div class="mt-1 flex justify-between text-xs text-slate-400"><span>200 px</span><span>2000 px</span></div>
+        </div>
+
+        <!-- Corrección de errores -->
+        <div class="mt-6">
+          <span class="label" id="ec-label">Corrección de errores</span>
+          <div class="flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-950/60" role="group" aria-labelledby="ec-label">
+            <button type="button" class="seg" data-ec="L" aria-pressed="false">Baja</button>
+            <button type="button" class="seg" data-ec="M" aria-pressed="true">Media</button>
+            <button type="button" class="seg" data-ec="Q" aria-pressed="false">Alta</button>
+            <button type="button" class="seg" data-ec="H" aria-pressed="false">Máxima</button>
+          </div>
+          <p id="ec-hint" class="mt-2 text-[13px] text-slate-500 dark:text-slate-400"></p>
+        </div>
+      </section>
+
+      <!-- ---------- Tarjeta: historial ---------- -->
+      <section class="card p-5 lg:p-6" aria-labelledby="history-title">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="history-title" class="card-title">Historial</h2>
+            <p class="card-hint">Tus últimos 8 códigos, guardados en este navegador</p>
+          </div>
+          <button id="clear-history" type="button" class="rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-0 dark:text-slate-400 dark:hover:bg-rose-500/10 dark:hover:text-rose-300">Borrar todo</button>
+        </div>
+        <ul id="history-list" class="mt-4 grid gap-2 sm:grid-cols-2"></ul>
+        <p id="history-empty" class="mt-4 rounded-xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
+          Descarga, copia o pulsa Guardar en un código y aparecerá aquí para reutilizarlo.
+        </p>
+      </section>
+    </div>
+  </main>
+
+  <!-- Botón flotante (solo móvil): vuelve a la vista previa cuando queda fuera de pantalla -->
+  <button id="jump-preview" type="button"
+          class="fixed right-4 z-30 flex translate-y-24 items-center gap-2 rounded-2xl bg-violet-600 py-2 pl-2 pr-4 text-sm font-semibold text-white opacity-0 shadow-xl shadow-violet-900/30 transition-all duration-300 md:hidden"
+          style="bottom: calc(1rem + env(safe-area-inset-bottom, 0px));" aria-label="Ver código QR" tabindex="-1">
+    <span id="jump-thumb" class="qr-thumb block h-9 w-9 overflow-hidden rounded-lg bg-white"></span>
+    Ver QR
+  </button>
+
+  <!-- Notificaciones (toast) -->
+  <div id="toast" class="pointer-events-none fixed left-1/2 z-40 -translate-x-1/2 translate-y-4 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white opacity-0 shadow-xl transition-all duration-300 dark:bg-white dark:text-slate-900"
+       style="bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));" role="status" aria-live="polite"></div>
+
+  <!-- =======================================================================
+       3. JAVASCRIPT
+       ======================================================================= -->
+  <script>
+  (function () {
+    'use strict';
+
+    /* -------------------------------------------------------------------
+       3.1 Utilidades
+       ------------------------------------------------------------------- */
+    const $  = (sel, ctx = document) => ctx.querySelector(sel);
+    const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
+
+    /** Retrasa la ejecución hasta que el usuario deja de escribir. */
+    const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+
+    /** Acceso seguro a localStorage (puede estar bloqueado). */
+    const store = {
+      get(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } },
+      set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* sin almacenamiento: se ignora */ } },
+    };
+
+    /** Normaliza un color hexadecimal (#abc → #AABBCC). Devuelve null si no es válido. */
+    function normalizeHex(v) {
+      let h = String(v || '').trim().replace(/^#?/, '#');
+      if (/^#[0-9a-f]{3}$/i.test(h)) h = '#' + h.slice(1).split('').map(c => c + c).join('');
+      return /^#[0-9a-f]{6}$/i.test(h) ? h.toUpperCase() : null;
+    }
+
+    /** Luminancia relativa WCAG → ratio de contraste entre dos colores. */
+    function luminance(hex) {
+      const [r, g, b] = [1, 3, 5].map(i => {
+        const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+    function contrastRatio(a, b) {
+      const [l1, l2] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+      return (l1 + 0.05) / (l2 + 0.05);
+    }
+
+    /** Tamaño en bytes UTF-8 (lo que realmente ocupa en el QR). */
+    const byteLength = s => new TextEncoder().encode(s).length;
+
+    /** Notificación breve. */
+    const toastEl = $('#toast');
+    let toastTimer;
+    function toast(msg) {
+      toastEl.textContent = msg;
+      toastEl.classList.remove('opacity-0', 'translate-y-4');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastEl.classList.add('opacity-0', 'translate-y-4'), 2400);
+    }
+
+    /* -------------------------------------------------------------------
+       3.2 Estado global de la aplicación
+       ------------------------------------------------------------------- */
+    const TYPE_LABELS = { url: 'URL', text: 'Texto', wifi: 'WiFi', vcard: 'Contacto', email: 'Correo' };
+
+    // Capacidad máxima aproximada (bytes, modo binario, versión 40) por nivel de corrección.
+    const EC_CAPACITY = { L: 2953, M: 2331, Q: 1663, H: 1273 };
+    const EC_HINTS = {
+      L: 'Recupera hasta un 7 % del código dañado. Ideal para pantallas y contenido largo.',
+      M: 'Recupera hasta un 15 %. El equilibrio recomendado para la mayoría de usos.',
+      Q: 'Recupera hasta un 25 %. Útil para impresiones que pueden ensuciarse.',
+      H: 'Recupera hasta un 30 %. La opción más robusta, con más módulos.',
+    };
+
+    // Mapeo de la forma elegida a las opciones de qr-code-styling.
+    const DOT_STYLES = {
+      square:  { dots: 'square',         corner: 'square',        cornerDot: 'square' },
+      rounded: { dots: 'rounded',        corner: 'extra-rounded', cornerDot: 'dot' },
+      dots:    { dots: 'dots',           corner: 'dot',           cornerDot: 'dot' },
+      classy:  { dots: 'classy-rounded', corner: 'extra-rounded', cornerDot: 'square' },
+    };
+
+    const PRESETS = [
+      { name: 'Clásico',   fg: '#0F172A', bg: '#FFFFFF' },
+      { name: 'Violeta',   fg: '#4C1D95', bg: '#F5F3FF' },
+      { name: 'Esmeralda', fg: '#064E3B', bg: '#ECFDF5' },
+      { name: 'Océano',    fg: '#1E3A8A', bg: '#EFF6FF' },
+      { name: 'Noche',     fg: '#C4B5FD', bg: '#0F172A' },
+    ];
+
+    const state = {
+      type: 'url',
+      fg: '#0F172A',
+      bg: '#FFFFFF',
+      dot: 'square',
+      size: 600,
+      ec: 'M',
+      data: '',     // cadena final codificada en el QR
+      valid: false, // hay datos válidos para exportar
+    };
+
+    /* -------------------------------------------------------------------
+       3.3 Tema claro / oscuro
+       ------------------------------------------------------------------- */
+    const themeBtn = $('#theme-toggle');
+    function applyTheme(theme) {
+      const root = document.documentElement;
+      root.classList.toggle('dark', theme === 'dark');
+      root.setAttribute('data-theme', theme);
+      themeBtn.setAttribute('aria-label', theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro');
+      try { localStorage.setItem('qr-theme', theme); } catch (e) { /* ignorado */ }
+    }
+    themeBtn.addEventListener('click', () => {
+      applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+    });
+    applyTheme(document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+
+    /* -------------------------------------------------------------------
+       3.4 Lectura de formularios y construcción de la cadena del QR
+       ------------------------------------------------------------------- */
+
+    /** Lee todos los campos [data-field] del panel activo. */
+    function getFields(type) {
+      const panel = $(`[data-panel="${type}"]`);
+      const out = {};
+      $$('[data-field]', panel).forEach(el => {
+        out[el.dataset.field] = el.type === 'checkbox' ? el.checked : el.value;
+      });
+      return out;
+    }
+
+    /** Rellena los campos de un panel (usado al restaurar desde el historial). */
+    function setFields(type, fields) {
+      const panel = $(`[data-panel="${type}"]`);
+      $$('[data-field]', panel).forEach(el => {
+        const v = fields[el.dataset.field];
+        if (el.type === 'checkbox') el.checked = !!v;
+        else el.value = v ?? '';
+      });
+      if (type === 'wifi') setSecurity(fields.security || 'WPA');
+    }
+
+    /** Escapa caracteres especiales en el formato WIFI: y en vCard. */
+    const escWifi  = s => String(s).replace(/([\\;,:"])/g, '\\$1');
+    const escVcard = s => String(s).replace(/([\\;,])/g, '\\$1').replace(/\n/g, '\\n');
+
+    /** Convierte los campos de cada tipo al texto estándar que leen los móviles. */
+    function buildData(type, f) {
+      switch (type) {
+        case 'url': {
+          const v = (f.url || '').trim();
+          if (!v) return '';
+          return /^[a-z][a-z0-9+.-]*:/i.test(v) ? v : 'https://' + v;
+        }
+        case 'text':
+          return f.text || '';
+        case 'wifi': {
+          if (!f.ssid.trim()) return '';
+          const sec = f.security === 'nopass' ? 'nopass' : f.security;
+          let s = `WIFI:T:${sec};S:${escWifi(f.ssid)};`;
+          if (sec !== 'nopass' && f.password) s += `P:${escWifi(f.password)};`;
+          if (f.hidden) s += 'H:true;';
+          return s + ';';
+        }
+        case 'vcard': {
+          const has = ['first', 'last', 'phone', 'email', 'org'].some(k => (f[k] || '').trim());
+          if (!has) return '';
+          const fn = [f.first, f.last].map(s => (s || '').trim()).filter(Boolean).join(' ');
+          const lines = [
+            'BEGIN:VCARD', 'VERSION:3.0',
+            `N:${escVcard(f.last || '')};${escVcard(f.first || '')};;;`,
+            `FN:${escVcard(fn || f.org || '')}`,
+          ];
+          if (f.org)   lines.push(`ORG:${escVcard(f.org)}`);
+          if (f.title) lines.push(`TITLE:${escVcard(f.title)}`);
+          if (f.phone) lines.push(`TEL;TYPE=CELL:${f.phone.trim()}`);
+          if (f.email) lines.push(`EMAIL:${f.email.trim()}`);
+          if (f.web)   lines.push(`URL:${f.web.trim()}`);
+          lines.push('END:VCARD');
+          return lines.join('\n');
+        }
+        case 'email': {
+          const to = (f.to || '').trim();
+          if (!to && !f.subject && !f.body) return '';
+          const params = [];
+          if (f.subject) params.push('subject=' + encodeURIComponent(f.subject));
+          if (f.body)    params.push('body=' + encodeURIComponent(f.body));
+          return `mailto:${to}${params.length ? '?' + params.join('&') : ''}`;
+        }
+      }
+      return '';
+    }
+
+    /** Resumen legible del contenido (para la vista previa y el historial). */
+    function describe(type, f) {
+      switch (type) {
+        case 'url':   return (f.url || '').replace(/^https?:\/\//i, '');
+        case 'text':  return (f.text || '').replace(/\s+/g, ' ').slice(0, 60);
+        case 'wifi':  return f.ssid;
+        case 'vcard': return [f.first, f.last].filter(Boolean).join(' ') || f.org || f.email || f.phone;
+        case 'email': return f.to || f.subject || 'Correo';
+      }
+      return '';
+    }
+
+    /* -------------------------------------------------------------------
+       3.5 Instancia de qr-code-styling y renderizado
+       ------------------------------------------------------------------- */
+    const libReady = typeof window.QRCodeStyling === 'function';
+
+    /** Opciones completas de la librería a partir del estado actual. */
+    function qrOptions(overrides = {}) {
+      const ds = DOT_STYLES[state.dot];
+      return Object.assign({
+        type: 'svg',
+        width: state.size,
+        height: state.size,
+        margin: Math.round(state.size * 0.04),
+        data: state.data || ' ',
+        qrOptions: { errorCorrectionLevel: state.ec },
+        dotsOptions: { color: state.fg, type: ds.dots },
+        cornersSquareOptions: { color: state.fg, type: ds.corner },
+        cornersDotOptions: { color: state.fg, type: ds.cornerDot },
+        backgroundOptions: { color: state.bg },
+      }, overrides);
+    }
+
+    const canvasEl = $('#qr-canvas');
+    const qr = libReady ? new QRCodeStyling(qrOptions()) : null;
+    if (qr) qr.append(canvasEl);
+
+    // Miniatura del botón flotante móvil
+    const jumpQr = libReady ? new QRCodeStyling(qrOptions({ width: 120, height: 120, margin: 6 })) : null;
+    if (jumpQr) jumpQr.append($('#jump-thumb'));
+
+    /** Muestra el estado vacío o de error dentro del marco de vista previa. */
+    function setEmpty(on, msg) {
+      const empty = $('#qr-empty');
+      empty.classList.toggle('hidden', !on);
+      empty.classList.toggle('flex', on);
+      if (msg) $('#qr-empty-text').textContent = msg;
+    }
+
+    /** Animación de barrido para confirmar visualmente el cambio. */
+    function sweep() {
+      const s = $('#scan');
+      s.classList.remove('hidden', 'scan-line');
+      void s.offsetWidth; // reinicia la animación
+      s.classList.add('scan-line');
+      s.addEventListener('animationend', () => s.classList.add('hidden'), { once: true });
+    }
+
+    /** Recalcula los datos y redibuja el QR. Punto central de la app. */
+    let lastSignature = '';
+    function render() {
+      const fields = getFields(state.type);
+      state.data = buildData(state.type, fields);
+
+      // Metadatos de la cabecera de vista previa
+      $('#type-badge').textContent = TYPE_LABELS[state.type];
+      $('#export-size').textContent = `Exportación: ${state.size} × ${state.size} px`;
+      $('#qr-stage').style.backgroundColor = state.bg;
+
+      // Validaciones
+      const bytes = byteLength(state.data);
+      const cap = EC_CAPACITY[state.ec];
+      let error = '';
+      if (!libReady) error = 'No se pudo cargar el generador de QR. Revisa tu conexión y recarga la página.';
+      else if (!state.data) error = 'Completa los datos para generar tu código';
+      else if (bytes > cap) error = `El contenido ocupa ${bytes} bytes y el máximo con esta corrección es ${cap}. Acórtalo o baja la corrección de errores.`;
+
+      state.valid = !error;
+      setEmpty(!!error, error);
+      $('#preview-meta').textContent = state.valid ? `${bytes} bytes codificados` : 'Se actualiza mientras escribes';
+      ['#dl-png', '#dl-svg', '#copy-img', '#save-history'].forEach(id => { $(id).disabled = !state.valid; });
+
+      updateContrastWarning();
+      if (!state.valid) return;
+
+      // Evita redibujar si nada cambió
+      const signature = JSON.stringify([state.data, state.fg, state.bg, state.dot, state.size, state.ec]);
+      if (signature === lastSignature) return;
+      lastSignature = signature;
+
+      try {
+        qr.update(qrOptions());
+        jumpQr.update(qrOptions({ width: 120, height: 120, margin: 6 }));
+        sweep();
+      } catch (err) {
+        setEmpty(true, 'Este contenido no cabe en un código QR. Acórtalo e inténtalo de nuevo.');
+        state.valid = false;
+      }
+    }
+    const renderSoon = debounce(render, 180);
+
+    /** Avisa si el contraste es bajo o los colores están invertidos. */
+    function updateContrastWarning() {
+      const box = $('#contrast-warning');
+      const ratio = contrastRatio(state.fg, state.bg);
+      let msg = '';
+      if (ratio < 3) msg = `Contraste bajo (${ratio.toFixed(1)}:1). Algunos lectores no podrán escanearlo; usa colores más diferenciados.`;
+      else if (luminance(state.fg) > luminance(state.bg)) msg = 'Los puntos son más claros que el fondo. Muchas cámaras leen mejor puntos oscuros sobre fondo claro.';
+      box.classList.toggle('hidden', !msg);
+      box.classList.toggle('flex', !!msg);
+      $('#contrast-text').textContent = msg;
+    }
+
+    /* -------------------------------------------------------------------
+       3.6 Eventos de la interfaz
+       ------------------------------------------------------------------- */
+
+    // Pestañas de tipo de contenido
+    function setType(type) {
+      state.type = type;
+      $$('[role="tab"]').forEach(t => t.setAttribute('aria-selected', String(t.dataset.type === type)));
+      $$('.panel').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== type));
+      render();
+    }
+    $$('[role="tab"]').forEach(tab => tab.addEventListener('click', () => setType(tab.dataset.type)));
+
+    // Navegación con flechas entre pestañas (accesibilidad)
+    $('[role="tablist"]').addEventListener('keydown', e => {
+      if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+      const tabs = $$('[role="tab"]');
+      const i = tabs.findIndex(t => t.getAttribute('aria-selected') === 'true');
+      const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+      next.focus(); setType(next.dataset.type);
+    });
+
+    // Cualquier campo de contenido → vista previa en tiempo real
+    $$('[data-field]').forEach(el => el.addEventListener('input', renderSoon));
+    $$('[data-field][type="checkbox"]').forEach(el => el.addEventListener('change', render));
+
+    // Contador de caracteres del texto libre
+    const textArea = $('#f-text');
+    const updateCount = () => { $('#text-count').textContent = `${textArea.value.length} caracteres`; };
+    textArea.addEventListener('input', updateCount);
+
+    // Seguridad WiFi
+    function setSecurity(sec) {
+      $('#f-security').value = sec;
+      $$('[data-security]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.security === sec)));
+      $('#wifi-pass-wrap').classList.toggle('hidden', sec === 'nopass');
+    }
+    $$('[data-security]').forEach(b => b.addEventListener('click', () => { setSecurity(b.dataset.security); render(); }));
+
+    // Mostrar / ocultar contraseña
+    $('#toggle-pass').addEventListener('click', e => {
+      const input = $('#f-pass');
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      e.currentTarget.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
+    });
+
+    // Colores: selector nativo + campo hexadecimal sincronizados
+    function setColor(which, hex) {
+      const n = normalizeHex(hex);
+      if (!n) return;
+      state[which] = n;
+      $(`#${which}-color`).value = n.toLowerCase();
+      if (document.activeElement !== $(`#${which}-text`)) $(`#${which}-text`).value = n;
+      highlightPreset();
+      renderSoon();
+    }
+    ['fg', 'bg'].forEach(which => {
+      $(`#${which}-color`).addEventListener('input', e => setColor(which, e.target.value));
+      $(`#${which}-text`).addEventListener('input', e => setColor(which, e.target.value));
+      $(`#${which}-text`).addEventListener('blur', e => { e.target.value = state[which]; });
+    });
+    $('#swap-colors').addEventListener('click', () => {
+      const { fg, bg } = state;
+      setColor('fg', bg); setColor('bg', fg);
+    });
+
+    // Combinaciones de color predefinidas
+    const presetsEl = $('#presets');
+    PRESETS.forEach(p => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = p.name;
+      b.setAttribute('aria-label', `Combinación ${p.name}`);
+      b.dataset.fg = p.fg; b.dataset.bg = p.bg;
+      b.className = 'group relative h-8 w-8 overflow-hidden rounded-full ring-1 ring-slate-200 transition-all duration-300 hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:ring-white/15';
+      b.innerHTML = `<span class="absolute inset-0" style="background:${p.bg}"></span><span class="absolute inset-[7px] rounded-full" style="background:${p.fg}"></span>`;
+      b.addEventListener('click', () => { setColor('fg', p.fg); setColor('bg', p.bg); });
+      presetsEl.appendChild(b);
+    });
+    function highlightPreset() {
+      $$('button', presetsEl).forEach(b => {
+        const on = b.dataset.fg === state.fg && b.dataset.bg === state.bg;
+        b.classList.toggle('ring-2', on);
+        b.classList.toggle('!ring-violet-500', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+    }
+
+    // Forma de los módulos
+    function setDot(dot) {
+      state.dot = dot;
+      $$('[data-dot]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.dot === dot)));
+      render();
+    }
+    $$('[data-dot]').forEach(b => b.addEventListener('click', () => setDot(b.dataset.dot)));
+
+    // Tamaño
+    const sizeInput = $('#size');
+    function setSize(v) {
+      state.size = Number(v);
+      sizeInput.value = state.size;
+      $('#size-out').textContent = `${state.size} px`;
+      renderSoon();
+    }
+    sizeInput.addEventListener('input', e => setSize(e.target.value));
+
+    // Corrección de errores
+    function setEc(ec) {
+      state.ec = ec;
+      $$('[data-ec]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ec === ec)));
+      $('#ec-hint').textContent = EC_HINTS[ec];
+      render();
+    }
+    $$('[data-ec]').forEach(b => b.addEventListener('click', () => setEc(b.dataset.ec)));
+
+    /* -------------------------------------------------------------------
+       3.7 Descargas y portapapeles
+       Dentro de claude.ai se usa la capacidad "downloads" del visor;
+       al abrir el archivo directamente en el navegador se usa un <a download>.
+       ------------------------------------------------------------------- */
+    const downloadsCap = (window.claude && typeof window.claude.use === 'function')
+      ? window.claude.use('downloads').catch(() => null)
+      : Promise.resolve(null);
+
+    async function saveBlob(blob, filename) {
+      const cap = await downloadsCap;
+      if (cap) {
+        try {
+          await cap.save({ filename, data: blob });
+          return true;
+        } catch (err) {
+          if (err && err.code === 'declined') { toast('Descarga cancelada'); return false; }
+          if (err && err.code === 'rate_limited') { toast('Ya hay una descarga pendiente de confirmar'); return false; }
+          // Cualquier otro caso: se intenta la descarga estándar
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      return true;
+    }
+
+    /** Nombre de archivo descriptivo: qr-wifi-micasa-5g.png */
+    function fileName(ext) {
+      const slug = (describe(state.type, getFields(state.type)) || '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+      return `qr-${state.type}${slug ? '-' + slug : ''}.${ext}`;
+    }
+
+    async function download(ext) {
+      if (!state.valid) return;
+      try {
+        // Se genera una instancia dedicada a la exportación con el tamaño real
+        const exporter = new QRCodeStyling(qrOptions({ type: ext === 'png' ? 'canvas' : 'svg' }));
+        let blob = await exporter.getRawData(ext);
+        if (ext === 'svg') blob = new Blob([await blob.text()], { type: 'image/svg+xml' });
+        const ok = await saveBlob(blob, fileName(ext));
+        if (ok) { toast(`${ext.toUpperCase()} descargado`); addToHistory(); }
+      } catch (err) {
+        console.warn(err);
+        toast('No se pudo generar el archivo. Inténtalo de nuevo.');
+      }
+    }
+    $('#dl-png').addEventListener('click', () => download('png'));
+    $('#dl-svg').addEventListener('click', () => download('svg'));
+
+    // Copiar la imagen PNG al portapapeles
+    const canCopyImage = !!(navigator.clipboard && window.ClipboardItem);
+    $('#copy-img').addEventListener('click', async () => {
+      if (!state.valid) return;
+      if (!canCopyImage) { toast('Tu navegador no permite copiar imágenes. Descarga el PNG.'); return; }
+      try {
+        const exporter = new QRCodeStyling(qrOptions({ type: 'canvas' }));
+        // Se pasa la promesa directamente para compatibilidad con Safari
+        const blobPromise = exporter.getRawData('png').then(b => new Blob([b], { type: 'image/png' }));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]);
+        toast('Imagen copiada al portapapeles');
+        addToHistory();
+      } catch (err) {
+        toast('El navegador bloqueó el portapapeles aquí. Descarga el PNG.');
+      }
+    });
+
+    /* -------------------------------------------------------------------
+       3.8 Historial (localStorage)
+       ------------------------------------------------------------------- */
+    const HISTORY_KEY = 'qr-history';
+    const HISTORY_MAX = 8;
+    let history = store.get(HISTORY_KEY, []);
+    if (!Array.isArray(history)) history = [];
+
+    function addToHistory(showToast) {
+      if (!state.valid) return;
+      const fields = getFields(state.type);
+      const entry = {
+        id: Date.now().toString(36),
+        type: state.type,
+        fields,
+        style: { fg: state.fg, bg: state.bg, dot: state.dot, size: state.size, ec: state.ec },
+        data: state.data,
+        label: describe(state.type, fields) || TYPE_LABELS[state.type],
+        at: Date.now(),
+      };
+      // Sin duplicados: el mismo contenido y estilo sube al principio
+      const key = e => JSON.stringify([e.data, e.style]);
+      history = [entry, ...history.filter(e => key(e) !== key(entry))].slice(0, HISTORY_MAX);
+      store.set(HISTORY_KEY, history);
+      renderHistory();
+      if (showToast) toast('Guardado en el historial');
+    }
+    $('#save-history').addEventListener('click', () => addToHistory(true));
+
+    function restore(entry) {
+      setType(entry.type);
+      setFields(entry.type, entry.fields);
+      if (entry.type === 'text') updateCount();
+      const s = entry.style;
+      setColor('fg', s.fg); setColor('bg', s.bg);
+      state.dot = s.dot; $$('[data-dot]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.dot === s.dot)));
+      setSize(s.size);
+      setEc(s.ec);
+      render();
+      toast('Código restaurado');
+      if (window.matchMedia('(max-width: 767px)').matches) $('#preview-card').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function timeAgo(ts) {
+      const m = Math.round((Date.now() - ts) / 60000);
+      if (m < 1) return 'ahora mismo';
+      if (m < 60) return `hace ${m} min`;
+      const h = Math.round(m / 60);
+      if (h < 24) return `hace ${h} h`;
+      return new Date(ts).toLocaleDateString('es', { day: 'numeric', month: 'short' });
+    }
+
+    function renderHistory() {
+      const list = $('#history-list');
+      list.innerHTML = '';
+      $('#history-empty').classList.toggle('hidden', history.length > 0);
+      $('#clear-history').disabled = history.length === 0;
+
+      history.forEach(entry => {
+        const li = document.createElement('li');
+        li.className = 'group flex items-center gap-3 rounded-xl border border-slate-200 bg-white/60 p-2 pr-1.5 transition-all duration-300 hover:border-violet-300 dark:border-white/[0.07] dark:bg-white/[0.02] dark:hover:border-violet-400/40';
+
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500';
+        open.setAttribute('aria-label', `Restaurar ${TYPE_LABELS[entry.type]}: ${entry.label}`);
+
+        const thumb = document.createElement('span');
+        thumb.className = 'qr-thumb block h-12 w-12 shrink-0 overflow-hidden rounded-lg ring-1 ring-slate-200 dark:ring-white/10';
+        thumb.style.background = entry.style.bg;
+        if (libReady) {
+          const ds = DOT_STYLES[entry.style.dot] || DOT_STYLES.square;
+          new QRCodeStyling({
+            type: 'svg', width: 96, height: 96, margin: 4, data: entry.data,
+            qrOptions: { errorCorrectionLevel: entry.style.ec },
+            dotsOptions: { color: entry.style.fg, type: ds.dots },
+            cornersSquareOptions: { color: entry.style.fg, type: ds.corner },
+            cornersDotOptions: { color: entry.style.fg, type: ds.cornerDot },
+            backgroundOptions: { color: entry.style.bg },
+          }).append(thumb);
+        }
+
+        const text = document.createElement('span');
+        text.className = 'min-w-0';
+        const title = document.createElement('span');
+        title.className = 'block truncate text-sm font-medium text-slate-800 dark:text-slate-100';
+        title.textContent = entry.label;
+        const meta = document.createElement('span');
+        meta.className = 'block text-xs text-slate-500 dark:text-slate-400';
+        meta.textContent = `${TYPE_LABELS[entry.type]}, ${timeAgo(entry.at)}`;
+        text.append(title, meta);
+        open.append(thumb, text);
+        open.addEventListener('click', () => restore(entry));
+
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'rounded-lg p-2 text-slate-400 transition-all duration-300 hover:bg-rose-50 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 dark:hover:bg-rose-500/10 dark:hover:text-rose-300';
+        del.setAttribute('aria-label', `Eliminar ${entry.label} del historial`);
+        del.innerHTML = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+        del.addEventListener('click', () => {
+          history = history.filter(e => e.id !== entry.id);
+          store.set(HISTORY_KEY, history);
+          renderHistory();
+        });
+
+        li.append(open, del);
+        list.appendChild(li);
+      });
+    }
+
+    $('#clear-history').addEventListener('click', () => {
+      history = [];
+      store.set(HISTORY_KEY, history);
+      renderHistory();
+      toast('Historial borrado');
+    });
+
+    /* -------------------------------------------------------------------
+       3.9 Botón flotante en móvil: aparece cuando la vista previa no se ve
+       ------------------------------------------------------------------- */
+    const jumpBtn = $('#jump-preview');
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(([entry]) => {
+        const show = !entry.isIntersecting && state.valid;
+        jumpBtn.classList.toggle('opacity-0', !show);
+        jumpBtn.classList.toggle('translate-y-24', !show);
+        jumpBtn.tabIndex = show ? 0 : -1;
+      }, { threshold: 0.15 }).observe($('#qr-stage'));
+    }
+    jumpBtn.addEventListener('click', () => $('#preview-card').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+
+    /* -------------------------------------------------------------------
+       3.10 Arranque
+       ------------------------------------------------------------------- */
+    setSecurity('WPA');
+    setEc('M');
+    highlightPreset();
+    updateCount();
+    renderHistory();
+    render();
+  })();
+  </script>
+</body>
+</html>
